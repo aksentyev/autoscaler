@@ -41,6 +41,8 @@ const (
 	GceProviderName = "gce"
 	// MagnumProviderName gets the provider name of magnum
 	MagnumProviderName = "magnum"
+	// ServersComProviderName gets the provider name of servers.com
+	ServersComProviderName = "servers.com"
 	// KubemarkProviderName gets the provider name of kubemark
 	KubemarkProviderName = "kubemark"
 )
