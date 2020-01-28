@@ -1,13 +1,13 @@
 package pagination
 
 import (
+	"bytes"
 	"encoding/json"
+	"github.com/gophercloud/gophercloud"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/gophercloud/gophercloud"
 )
 
 // PageResult stores the HTTP response that returned the current page of results.
@@ -53,8 +53,25 @@ func PageResultFromParsed(resp *http.Response, body interface{}) PageResult {
 
 // Request performs an HTTP request and extracts the http.Response from the result.
 func Request(client *gophercloud.ServiceClient, headers map[string]string, url string) (*http.Response, error) {
-	return client.Get(url, nil, &gophercloud.RequestOpts{
+	resp, err := client.Get(url, nil, &gophercloud.RequestOpts{
 		MoreHeaders: headers,
 		OkCodes:     []int{200, 204, 300},
 	})
+
+	if err != nil {
+		return resp, err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return resp, err
+	}
+
+	//fmt.Println(">>>>>>>>>")
+	//fmt.Println(url)
+	//fmt.Println(string(body))
+	//fmt.Println(">>>>>>>>>")
+	resp.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+
+	return resp, nil
 }
