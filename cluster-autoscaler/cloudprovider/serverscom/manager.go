@@ -211,12 +211,14 @@ func (m *managerServersCom) GetNodeGroups() ([]*nodeGroup, error) {
 		}
 
 		if _, ok := nodeGroups[ngName]; ok {
-			if statusMapping[srv.Status] == nodeStatusRunning {
-				nodeGroups[ngName].size.target++
-				nodeGroups[ngName].nodes = append(nodeGroups[ngName].nodes, cloudprovider.Instance{Id: srv.Name})
-			} else {
-				nodeGroups[ngName].notRunningNodes = append(nodeGroups[ngName].nodes, cloudprovider.Instance{Id: srv.Name})
+			status, ok := statusMapping[srv.Status]
+			if !ok {
+				status = nodeStatusRunning
+				status.ErrorInfo = &cloudprovider.InstanceErrorInfo{ErrorMessage: "unknown instance state=" + srv.Status}
 			}
+
+			nodeGroups[ngName].size.target++
+			nodeGroups[ngName].nodes = append(nodeGroups[ngName].nodes, cloudprovider.Instance{Id: srv.Name, Status: &status})
 		}
 	}
 
@@ -388,7 +390,7 @@ func (m *managerServersCom) CreateNodes(count int, ngName string) (int, error) {
 	)
 
 	m.Lock()
-	ngLen := len(m.nodeGroups[ngName].nodes) + len(m.nodeGroups[ngName].notRunningNodes)
+	ngLen := len(m.nodeGroups[ngName].nodes)
 	m.Unlock()
 
 	for i := 0; i < count; i++ {
