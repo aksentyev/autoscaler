@@ -3,7 +3,6 @@ package serverscom
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/networks"
@@ -25,12 +24,13 @@ import (
 	"time"
 )
 
-const (
-	EnvRegionName = "OS_REGION_NAME"
-)
+const EnvRegionName = "OS_REGION_NAME"
+
+const defaultNodeGroupMaxSize = 10
 
 const (
-	defaultNodeGroupMaxSize = 10
+	nodeProvisionTimeout   = 300 * time.Second
+	nodeClusterJoinTimeout = 180 * time.Second
 )
 
 var ErrNotFound = errors.New("not found")
@@ -205,17 +205,18 @@ func (m *managerServersCom) GetNodeGroups() ([]*nodeGroup, error) {
 	}
 
 	for _, srv := range servers {
-		if statusMapping[srv.Status] != nodeStatusRunning {
-			continue
-		}
 		ngName := m.nodeGroupName(srv.Name)
 		if ngName == "" {
 			continue
 		}
 
 		if _, ok := nodeGroups[ngName]; ok {
-			nodeGroups[ngName].size.target++
-			nodeGroups[ngName].nodes = append(nodeGroups[ngName].nodes, cloudprovider.Instance{Id: srv.Name})
+			if statusMapping[srv.Status] == nodeStatusRunning {
+				nodeGroups[ngName].size.target++
+				nodeGroups[ngName].nodes = append(nodeGroups[ngName].nodes, cloudprovider.Instance{Id: srv.Name})
+			} else {
+				nodeGroups[ngName].notRunningNodes = append(nodeGroups[ngName].nodes, cloudprovider.Instance{Id: srv.Name})
+			}
 		}
 	}
 
@@ -385,11 +386,18 @@ func (m *managerServersCom) CreateNodes(count int, ngName string) (int, error) {
 		mtx     sync.Mutex
 		created int64
 	)
+
+	m.Lock()
+	ngLen := len(m.nodeGroups[ngName].nodes) + len(m.nodeGroups[ngName].notRunningNodes)
+	m.Unlock()
+
 	for i := 0; i < count; i++ {
+		newNodeName := fmt.Sprintf("%s-%s-%d", m.scaleProperties.newNodeNamePrefix, ngName, ngLen+1+i)
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := m.createNode(ngName)
+			err := m.createNode(ngName, newNodeName)
 			if err != nil {
 				mtx.Lock()
 				errList = append(errList, err.Error())
@@ -410,8 +418,7 @@ func (m *managerServersCom) CreateNodes(count int, ngName string) (int, error) {
 	return int(created), nil
 }
 
-func (m *managerServersCom) createNode(ngName string) error {
-	nodeName := fmt.Sprintf("%s-%s-%s", m.scaleProperties.newNodeNamePrefix, ngName, uuid.New().String())
+func (m *managerServersCom) createNode(ngName, nodeName string) error {
 
 	flavor := m.scaleProperties.flavors[ngName]
 	if flavor == "" {
@@ -452,7 +459,7 @@ func (m *managerServersCom) createNode(ngName string) error {
 		return errors.Wrap(err, "extract server info error")
 	}
 
-	timer := time.NewTimer(900 * time.Second)
+	timer := time.NewTimer(nodeProvisionTimeout)
 
 loop:
 	for {
@@ -462,17 +469,19 @@ loop:
 		default:
 			status, err := m.GetNodeStatusByID(srv.ID)
 			if err != nil {
-				klog.V(0).Infof("failed to check status for node '%s'", nodeName)
+				klog.V(0).Infof("node '%s': failed to check status", nodeName)
 			}
 
 			if status.ErrorInfo != nil {
-				klog.V(2).Infof("node '%s' status is abnormal: %v", nodeName, status.ErrorInfo.ErrorMessage)
+				klog.V(2).Infof("node '%s': status is abnormal: %v", nodeName, status.ErrorInfo.ErrorMessage)
 			} else {
-				klog.V(2).Infof("node '%s' status=%s", nodeName, strState(status.State))
+				klog.V(2).Infof("node '%s': status=%s", nodeName, strState(status.State))
 			}
 			if status == nodeStatusRunning {
-				klog.V(2).Infof("waiting for 3 minutes to allow node to join the cluster...")
-				time.Sleep(3 * time.Minute)
+				klog.V(2).Infof("node '%s': waiting for %s to allow node to join the cluster...",
+					nodeName, nodeClusterJoinTimeout)
+				time.Sleep(nodeClusterJoinTimeout)
+
 				klog.V(2).Infof("consider that node is successfully bootstrappped")
 				return nil
 			}

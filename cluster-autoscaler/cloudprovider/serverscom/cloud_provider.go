@@ -80,6 +80,7 @@ func (scp *serversComCloudProvider) NodeGroupForNode(node *apiv1.Node) (cloudpro
 }
 
 // Cleanup cleans up open resources before the cloud provider is destroyed, i.e. go routines etc.
+// todo with context
 func (scp *serversComCloudProvider) Cleanup() error {
 	return nil
 }

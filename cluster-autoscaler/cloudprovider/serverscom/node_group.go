@@ -17,6 +17,7 @@ type nodeGroup struct {
 	manager         manager
 	size            *nodeGroupSize
 	nodes           []cloudprovider.Instance
+	notRunningNodes []cloudprovider.Instance
 }
 
 type (
