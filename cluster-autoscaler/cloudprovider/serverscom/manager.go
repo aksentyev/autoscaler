@@ -44,6 +44,7 @@ type manager interface {
 	CreateNodes(count int, ngName string) (int, error)
 	Lock()
 	Unlock()
+	NewNodePrefix() string
 }
 
 type (
@@ -180,6 +181,10 @@ func newManager(configReader io.Reader) (*managerServersCom, error) {
 		},
 		nodeGroups: make(map[string]*nodeGroup),
 	}, nil
+}
+
+func (m *managerServersCom) NewNodePrefix() string {
+	return m.scaleProperties.newNodeNamePrefix
 }
 
 func (m *managerServersCom) GetNodeGroups() ([]*nodeGroup, error) {
@@ -389,17 +394,20 @@ func (m *managerServersCom) CreateNodes(count int, ngName string) (int, error) {
 		created int64
 	)
 
-	m.Lock()
-	ngLen := len(m.nodeGroups[ngName].nodes)
-	m.Unlock()
-
+	// generate new uniq node names
+	nodeNames := make([]string, count)
 	for i := 0; i < count; i++ {
-		newNodeName := fmt.Sprintf("%s-%s-%d", m.scaleProperties.newNodeNamePrefix, ngName, ngLen+1+i)
+		postfix := m.nodeGroups[ngName].NewPostfix(nodeNames...)
+		newNodeName := fmt.Sprintf("%s-%s-%s", m.scaleProperties.newNodeNamePrefix, ngName, postfix)
+		nodeNames[i] = newNodeName
+	}
 
+	// create nodes
+	for i := 0; i < count; i++ {
 		wg.Add(1)
-		go func() {
+		go func(name string) {
 			defer wg.Done()
-			err := m.createNode(ngName, newNodeName)
+			err := m.createNode(ngName, name)
 			if err != nil {
 				mtx.Lock()
 				errList = append(errList, err.Error())
@@ -408,7 +416,7 @@ func (m *managerServersCom) CreateNodes(count int, ngName string) (int, error) {
 			}
 
 			atomic.AddInt64(&created, 1)
-		}()
+		}(nodeNames[i])
 	}
 
 	wg.Wait()
@@ -476,6 +484,7 @@ loop:
 
 			if status.ErrorInfo != nil {
 				klog.V(2).Infof("node '%s': status is abnormal: %v", nodeName, status.ErrorInfo.ErrorMessage)
+				break loop
 			} else {
 				klog.V(2).Infof("node '%s': status=%s", nodeName, strState(status.State))
 			}

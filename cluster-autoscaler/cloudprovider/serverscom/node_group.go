@@ -2,12 +2,16 @@ package serverscom
 
 import (
 	"fmt"
+	"github.com/goombaio/namegenerator"
 	"github.com/pkg/errors"
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/klog"
 	schedulernodeinfo "k8s.io/kubernetes/pkg/scheduler/nodeinfo"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 // todo store nodegroup Min Max in config
@@ -47,6 +51,60 @@ func (ng *nodeGroup) TargetSize() (int, error) {
 	return ng.size.target, nil
 }
 
+func (ng *nodeGroup) LastScaledNodeID() (int, error) {
+	max := 0
+	ng.muClusterUpdate.Lock()
+	defer ng.muClusterUpdate.Unlock()
+	for _, n := range ng.nodes {
+		if strings.Contains(n.Id, ng.manager.NewNodePrefix()) {
+			maxS := strings.TrimPrefix(n.Id, ng.manager.NewNodePrefix()+"-"+ng.id+"-")
+			candidate, err := strconv.Atoi(maxS)
+			if err != nil {
+				return 0, errors.Wrap(err, "parse as int error")
+			}
+
+			if candidate > max {
+				max = candidate
+			}
+		}
+	}
+
+	return max, nil
+}
+
+func (ng *nodeGroup) NewPostfix(exclude ...string) string {
+	seed := time.Now().UTC().UnixNano()
+	nameGenerator := namegenerator.NewNameGenerator(seed)
+
+	return ng.newPostfix(nameGenerator.Generate, exclude...)
+}
+
+func (ng *nodeGroup) newPostfix(generator func() string, exclude ...string) string {
+	ng.muClusterUpdate.Lock()
+	defer ng.muClusterUpdate.Unlock()
+
+	postfix := ""
+nextPostfix:
+	for {
+		postfix = generator()
+		for _, n := range ng.nodes {
+			if strings.Contains(n.Id, postfix) {
+				continue nextPostfix
+			}
+		}
+
+		for _, s := range exclude {
+			if strings.Contains(s, postfix) {
+				continue nextPostfix
+			}
+		}
+
+		break
+	}
+
+	return postfix
+}
+
 // IncreaseSize increases the size of the node group. To delete a node you need
 // to explicitly name it and use DeleteNode. This function should wait until
 // node group size is updated. Implementation required.
@@ -60,16 +118,13 @@ func (ng *nodeGroup) IncreaseSize(delta int) error {
 		return errors.New("delta value is too big, may cause nodegroup overflow")
 	}
 
-	ng.muClusterUpdate.Lock()
-	defer ng.muClusterUpdate.Unlock()
-
 	created, err := ng.manager.CreateNodes(delta, ng.id)
 	if err != nil {
 		return errors.Wrap(err, "create nodes error")
 	}
 
 	// save target size
-	ng.size.target += created
+	ng.DecreaseTargetSize(created)
 
 	return nil
 }
@@ -92,7 +147,6 @@ func (ng *nodeGroup) DeleteNodes(nodes []*apiv1.Node) error {
 	return nil
 }
 
-// the following method is used to fix target size if it is inconsistent with registered nodes count. Before running this method
 // DecreaseTargetSize decreases the target size of the node group. This function
 // doesn't permit to delete any existing node and can be used only to reduce the
 // request for new nodes that have not been yet fulfilled. Delta should be negative.
