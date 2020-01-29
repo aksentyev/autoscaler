@@ -16,6 +16,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/version"
 	"k8s.io/klog"
+	"math/rand"
 	"os"
 	"regexp"
 	"strings"
@@ -319,6 +320,9 @@ func (m *managerServersCom) GetKnownNetworks() ([]Network, error) {
 		return nil, errors.Wrap(err, "extract networks error")
 	}
 
+	// shuffle networks to select different internet_* networks each time
+	shuffle(allNetworks)
+
 nextPrefix:
 	for _, prefix := range m.scaleProperties.networksPrefixes {
 		for _, net := range allNetworks {
@@ -559,6 +563,14 @@ var (
 		ErrorInfo: nil,
 	}
 )
+
+func shuffle(vals []networks.Network) {
+	r := rand.New(rand.NewSource(time.Now().Unix()))
+	for n := len(vals); n > 0; n-- {
+		randIndex := r.Intn(n)
+		vals[n-1], vals[randIndex] = vals[randIndex], vals[n-1]
+	}
+}
 
 // https://docs.openstack.org/api-guide/compute/server_concepts.html
 var statusMapping = map[string]cloudprovider.InstanceStatus{
