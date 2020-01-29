@@ -226,7 +226,7 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	scaleDown := a.scaleDown
 	autoscalingContext := a.AutoscalingContext
 
-	klog.V(4).Info("Starting main loop")
+	klog.V(4).Info("Starting main loop из семи залуп (6 покрошены, одна так брошена)")
 
 	stateUpdateStart := time.Now()
 
