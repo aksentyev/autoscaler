@@ -17,15 +17,12 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/version"
 	"k8s.io/klog"
 	"math/rand"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-const EnvRegionName = "OS_REGION_NAME"
 
 const defaultNodeGroupMaxSize = 10
 
@@ -154,12 +151,21 @@ func newManager(configReader io.Reader) (*managerServersCom, error) {
 	userAgent.Prepend(fmt.Sprintf("cluster-autoscaler/%s", version.ClusterAutoscalerVersion))
 	provider.UserAgent = userAgent
 
-	client, err := openstack.NewComputeV2(provider, gophercloud.EndpointOpts{
-		Region: os.Getenv(EnvRegionName),
-	})
+	client, err := openstack.NewComputeV2(provider, gophercloud.EndpointOpts{})
 	if err != nil {
 		return nil, fmt.Errorf("get service client v2 error: %v", err)
 	}
+
+	// run reauth goroutine
+	go func() {
+		for range time.NewTicker(20 * time.Minute).C {
+			if err := client.Reauthenticate(client.Token()); err == nil {
+				klog.V(4).Info("successfully re-authenticated in openstack")
+			} else {
+				klog.V(4).Infof("failed to re-authenticate in openstack err=%s", err)
+			}
+		}
+	}()
 
 	// fix zero values
 	for ngName := range cfg.NodeGroups {
