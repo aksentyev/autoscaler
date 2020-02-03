@@ -139,6 +139,7 @@ func newManager(configReader io.Reader) (*managerServersCom, error) {
 			Password:         cfg.Credentials.Password,
 			Username:         cfg.Credentials.Username,
 			DomainName:       cfg.Credentials.DomainName,
+			AllowReauth:      true,
 		}
 	}
 
@@ -155,17 +156,6 @@ func newManager(configReader io.Reader) (*managerServersCom, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get service client v2 error: %v", err)
 	}
-
-	// run reauth goroutine
-	go func() {
-		for range time.NewTicker(20 * time.Minute).C {
-			if err := client.Reauthenticate(client.Token()); err == nil {
-				klog.V(4).Info("successfully re-authenticated in openstack")
-			} else {
-				klog.V(4).Infof("failed to re-authenticate in openstack err=%s", err)
-			}
-		}
-	}()
 
 	// fix zero values
 	for ngName := range cfg.NodeGroups {
@@ -503,7 +493,7 @@ loop:
 					nodeName, nodeClusterJoinTimeout)
 				time.Sleep(nodeClusterJoinTimeout)
 
-				klog.V(2).Infof("consider that node is successfully bootstrappped")
+				klog.V(2).Infof("node '%s': consider that node is successfully bootstrappped", nodeName)
 				return nil
 			}
 
